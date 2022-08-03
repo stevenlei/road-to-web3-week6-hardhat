@@ -2,7 +2,12 @@
 
 pragma solidity ^0.8.0;
 
+import "./Treasury.sol";
+
 contract Stake {
+    // Treasury contract to save the balance of the staker
+    Treasury public treasury;
+
     // Balance of an address, should also handle in receive()
     mapping(address => uint256) public balances;
 
@@ -12,23 +17,22 @@ contract Stake {
     // Time to start the stake
     mapping(address => uint256) public stakedTime;
 
-    // Total amount that is locked (exceeded the withdrawal period)
-    uint256 public lockedAmount;
-
     // Available interest
     uint256 public availableInterest;
+
+    // Available interest buffer
+    uint256 public availableInterestBuffer;
 
     // Interest rate in gwei
     uint256 public interestRate;
 
+    // Contract owner
     address public owner;
 
+    // Staking Parameters
     uint256 public minStakeSeconds;
     uint256 public maxStakeSeconds;
-
-    uint256 public withdrawalPeriodSeconds;
-
-    address public lockerAddress;
+    uint256 public withdrawalPeriodEndsSeconds;
 
     event Received(address sender, uint256 amount);
     event Staked(address sender, uint256 amount);
@@ -37,6 +41,16 @@ contract Stake {
 
     constructor() {
         owner = msg.sender;
+    }
+
+    // Set the treasury contract address
+    function setTreasury(address _treasury) external onlyOwner {
+        require(
+            msg.sender == owner,
+            "Only owner can set the treasury contract address"
+        );
+
+        treasury = Treasury(_treasury);
     }
 
     // Set the interest rate in gwei
@@ -54,32 +68,49 @@ contract Stake {
         maxStakeSeconds = _maxStakeSeconds;
     }
 
-    // Set the withdrawalPeriodSeconds
-    function setWithdrawalPeriodSeconds(uint256 _withdrawalPeriodSeconds)
-        external
-        onlyOwner
-    {
-        withdrawalPeriodSeconds = _withdrawalPeriodSeconds;
+    // Set the withdrawalPeriodEndsSeconds
+    function setwithdrawalPeriodEndsSeconds(
+        uint256 _withdrawalPeriodEndsSeconds
+    ) external onlyOwner {
+        withdrawalPeriodEndsSeconds = _withdrawalPeriodEndsSeconds;
     }
 
-    // Set the lockerAddress
-    function setLockerAddress(address _lockerAddress) external onlyOwner {
-        lockerAddress = _lockerAddress;
-    }
-
-    // When one address staked, the staked amount cannot be changed unless unstake
+    // When one address staked, the staked amount cannot be changed before unstake
     function stake(uint256 amount)
         public
         payable
         hasBalance(true)
         hasStaked(false)
     {
+        require(amount > 0, "Stake amount must be greater than 0");
+        require(
+            amount <= balances[msg.sender],
+            "Stake amount must be less than or equal to the balance"
+        );
+
+        // Check if this contract has enough interest (maximized) to pay the staker
+        require(
+            (amount * interestRate) / 1 gwei <= availableInterestBuffer,
+            "Stake amount must be less than or equal to the available interest"
+        );
+
+        // Deduct the available interest buffer
+        availableInterestBuffer -= (amount * interestRate) / 1 gwei;
+
+        // Deduct the balance
         balances[msg.sender] -= amount;
+
+        // Set the staked amount
         stakes[msg.sender] = amount;
 
+        // Send the amount to treasury
+        treasury.stake{value: amount}(msg.sender);
+
+        // Broadcast the staked event
         emit Staked(msg.sender, amount);
     }
 
+    // Unstake the staked amount within the withdrawal period
     function unstake() public hasStaked(true) withinUnstakePeriod {
         // Get the staked amount
         uint256 amount = stakes[msg.sender];
@@ -87,52 +118,74 @@ contract Stake {
         // Reset the staked amount to 0
         stakes[msg.sender] = 0;
 
+        // Get the amount from treasury
+        treasury.unstake(msg.sender);
+
         // Add the staked amount to the balance
         balances[msg.sender] += amount;
 
+        // Get the staked seconds for interest calculation
         uint256 stakedSeconds = stakedTime[msg.sender] - block.timestamp;
 
+        // Calculate the interest
+        uint256 interest = calculateInterest(amount, stakedSeconds);
+
         // Interest earned
-        balances[msg.sender] += calculateInterest(amount, stakedSeconds);
+        balances[msg.sender] += interest;
+
+        // Deduct availableInterest
+        availableInterest -= interest;
+
+        // Add back the remaining interest to the buffer
+        availableInterestBuffer += (amount * interestRate) / 1 gwei - interest;
 
         // Reset the staked time to 0
         stakedTime[msg.sender] = 0;
 
-        // Emit the unstaked event
+        // Broadcast the unstaked event
         emit Unstaked(msg.sender, amount);
     }
 
+    // Withdraw all balance of an address
     function withdraw() public hasBalance(true) {
+        // Get the balance of an address
         uint256 balance = balances[msg.sender];
+
+        // Reset it to zero
         balances[msg.sender] = 0;
 
-        // Send all the sender's available balance to the sender
+        // Send all the available balance to the sender
         payable(msg.sender).transfer(balance);
 
+        // Broadcast the withdraw event
         emit Withdraw(msg.sender, balance);
     }
 
+    // Deposit interest to the contract so that stakers can receive
     function depositInterest() external payable onlyOwner {
+        // Add to the available interest
         availableInterest += balances[msg.sender];
+
+        // Buffer to determine if this contract has enough interest to allow new stakes
+        availableInterestBuffer += balances[msg.sender];
     }
 
-    function _isExceededWithdrawalPeriod() private view returns (bool) {
-        return
-            block.timestamp >
-            stakedTime[msg.sender] + withdrawalPeriodSeconds + maxStakeSeconds;
+    // Check the staked amount of an address
+    function getStake(address _address) public view returns (uint256) {
+        return stakes[_address];
     }
 
-    function getStake() public view returns (uint256) {}
+    // Check the balance of an address
+    function getBalance(address _address) public view returns (uint256) {
+        return balances[_address];
+    }
 
-    function getBalance() public view returns (uint256) {}
-
-    function getUnstake() public view returns (uint256) {}
-
-    function getWithdraw() public view returns (uint256) {}
-
-    // Users have to deposit to the contract before they can stake.
+    // Users have to deposit to the contract before they can stake
     receive() external payable {
+        // Add the balance to the sender
         balances[msg.sender] += msg.value;
+
+        // Broadcast the received event
         emit Received(msg.sender, msg.value);
     }
 
@@ -161,14 +214,6 @@ contract Stake {
         _;
     }
 
-    modifier isDuringStakePeriod() {
-        require(
-            block.timestamp < stakedTime[msg.sender] + minStakeSeconds,
-            "You can't stake yet"
-        );
-        _;
-    }
-
     modifier withinUnstakePeriod() {
         uint256 unstakeTimestampFrom = stakedTime[msg.sender] + minStakeSeconds;
         uint256 unstakeTimestampUntil = stakedTime[msg.sender] +
@@ -186,6 +231,7 @@ contract Stake {
         _;
     }
 
+    // Square root function
     function sqrt(uint256 x) internal pure returns (uint256 y) {
         uint256 z = (x + 1) / 2;
         y = x;
@@ -195,6 +241,7 @@ contract Stake {
         }
     }
 
+    // Calculate interest with a 'easeIn' curve
     function calculateInterest(uint256 _amount, uint256 _seconds)
         public
         view
