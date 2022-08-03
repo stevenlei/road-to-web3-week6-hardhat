@@ -67,8 +67,9 @@ contract Treasury {
         external
         onlyCaller
     {
-        // Send back the total balance to an address
-        payable(_to).transfer(_amount);
+        // Send the amount to the address
+        (bool sent, bytes memory data) = _to.call{value: _amount}("");
+        require(sent, "Failed to send the amount to the address");
     }
 
     modifier onlyCaller() {

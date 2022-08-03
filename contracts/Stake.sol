@@ -168,7 +168,8 @@ contract Stake {
         balances[msg.sender] = 0;
 
         // Send all the available balance to the sender
-        payable(msg.sender).transfer(balance);
+        (bool sent, bytes memory data) = msg.sender.call{value: balance}("");
+        require(sent, "Failed to send the balance to the sender");
 
         // Broadcast the withdraw event
         emit Withdraw(msg.sender, balance);
@@ -200,7 +201,9 @@ contract Stake {
 
     // withdraw function for admin, for getting the assets to invest etc.
     function adminWithdraw(address _to, uint256 _amount) public onlyOwner {
-        payable(_to).transfer(_amount);
+        // Send all the available balance to the sender
+        (bool sent, bytes memory data) = _to.call{value: _amount}("");
+        require(sent, "Failed to send the balance to the sender");
     }
 
     // withdraw function from treasury for admin, for getting the assets to invest etc.
