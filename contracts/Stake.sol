@@ -3,6 +3,7 @@
 pragma solidity ^0.8.0;
 
 import "./Treasury.sol";
+import "hardhat/console.sol";
 
 contract Stake {
     // Treasury contract to save the balance of the staker
@@ -39,8 +40,17 @@ contract Stake {
     event Unstaked(address sender, uint256 amount);
     event Withdraw(address to, uint256 amount);
 
-    constructor() {
+    constructor(
+        uint256 _interestRate,
+        uint256 _minStakeSeconds,
+        uint256 _maxStakeSeconds,
+        uint256 _withdrawalPeriodEndsSeconds
+    ) {
         owner = msg.sender;
+        interestRate = _interestRate;
+        minStakeSeconds = _minStakeSeconds;
+        maxStakeSeconds = _maxStakeSeconds;
+        withdrawalPeriodEndsSeconds = _withdrawalPeriodEndsSeconds;
     }
 
     // Set the treasury contract address
@@ -103,6 +113,9 @@ contract Stake {
         // Set the staked amount
         stakes[msg.sender] = amount;
 
+        // Set the stake time
+        stakedTime[msg.sender] = block.timestamp;
+
         // Send the amount to treasury
         treasury.stake{value: amount}(msg.sender);
 
@@ -125,7 +138,7 @@ contract Stake {
         balances[msg.sender] += amount;
 
         // Get the staked seconds for interest calculation
-        uint256 stakedSeconds = stakedTime[msg.sender] - block.timestamp;
+        uint256 stakedSeconds = block.timestamp - stakedTime[msg.sender];
 
         // Calculate the interest
         uint256 interest = calculateInterest(amount, stakedSeconds);
@@ -164,10 +177,10 @@ contract Stake {
     // Deposit interest to the contract so that stakers can receive
     function depositInterest() external payable onlyOwner {
         // Add to the available interest
-        availableInterest += balances[msg.sender];
+        availableInterest += msg.value;
 
         // Buffer to determine if this contract has enough interest to allow new stakes
-        availableInterestBuffer += balances[msg.sender];
+        availableInterestBuffer += msg.value;
     }
 
     // Check the staked amount of an address
@@ -178,6 +191,25 @@ contract Stake {
     // Check the balance of an address
     function getBalance(address _address) public view returns (uint256) {
         return balances[_address];
+    }
+
+    // Number of stakers
+    function getNumStakers() public view returns (uint256) {
+        return treasury.stakers();
+    }
+
+    // withdraw function for admin, for getting the assets to invest etc.
+    function adminWithdraw(address _to, uint256 _amount) public onlyOwner {
+        payable(_to).transfer(_amount);
+    }
+
+    // withdraw function from treasury for admin, for getting the assets to invest etc.
+    function adminWithdrawTreasury(address _to, uint256 _amount)
+        public
+        onlyOwner
+    {
+        // Withdraw from treasury
+        treasury.adminWithdraw(payable(_to), _amount);
     }
 
     // Users have to deposit to the contract before they can stake
@@ -191,6 +223,7 @@ contract Stake {
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only the owner can call this function");
+
         _;
     }
 
@@ -247,12 +280,17 @@ contract Stake {
         view
         returns (uint256)
     {
+        // Calculate the maxInterest (unit: gwei)
         uint256 maxInterest = (_amount * interestRate) / 1 gwei;
 
-        uint256 fulfilled = maxStakeSeconds - _seconds;
+        // Calculate the fulfilled percent (uint: gwei for precision)
+        uint256 fulfilledPercentInGwei = 1 gwei -
+            (((maxStakeSeconds - _seconds) * 1 gwei) / maxStakeSeconds);
 
-        return
-            (maxInterest * (_seconds - sqrt(_seconds - fulfilled**2))) /
-            _seconds;
+        // Formula of easeInCubic
+        uint256 multiplier = fulfilledPercentInGwei**3;
+
+        // Calculate the interest
+        return (maxInterest * multiplier) / 1 gwei**3;
     }
 }
