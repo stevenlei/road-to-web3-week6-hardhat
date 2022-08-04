@@ -1,4 +1,5 @@
 async function main() {
+  let interestRate = hre.ethers.utils.parseUnits("1", "gwei") / 100; // 1%
   let minStakeSeconds = 120; // 2 minute
   let maxStakeSeconds = 240; // 4 minute
   let withdrawalPeriodEndsSeconds = 360; // 6 minute
@@ -6,7 +7,7 @@ async function main() {
   // Deploy Stake contract
   const Stake = await hre.ethers.getContractFactory("Stake");
   const stake = await Stake.deploy(
-    hre.ethers.utils.parseUnits("1", "gwei") / 100,
+    interestRate,
     minStakeSeconds,
     maxStakeSeconds,
     withdrawalPeriodEndsSeconds
@@ -17,7 +18,7 @@ async function main() {
 
   // Deposit some interest
   await stake.depositInterest({
-    value: hre.ethers.utils.parseEther("1"),
+    value: hre.ethers.utils.parseEther("0.1"),
   });
 
   // Deploy Treasury contract
