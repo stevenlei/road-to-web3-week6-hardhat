@@ -32,7 +32,7 @@ describe("Deployment", () => {
     const Stake = await ethers.getContractFactory("Stake");
 
     let interestRate = ethers.utils.parseUnits("1", "gwei") / 100; // 1%
-    let minStakeSeconds = 5; // 10 seconds
+    let minStakeSeconds = 5; // 5 seconds
     let maxStakeSeconds = 10; // 10 seconds
     let withdrawalPeriodEndsSeconds = 15; // 15 seconds
 
@@ -235,7 +235,7 @@ describe("Logic Test", () => {
 
     await stake.connect(addr1).stake(amount);
 
-    await wait(10000);
+    await wait(11000);
 
     await stake.connect(addr1).unstake();
 

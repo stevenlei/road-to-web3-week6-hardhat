@@ -79,7 +79,7 @@ contract Stake {
     }
 
     // Set the withdrawalPeriodEndsSeconds
-    function setwithdrawalPeriodEndsSeconds(
+    function setWithdrawalPeriodEndsSeconds(
         uint256 _withdrawalPeriodEndsSeconds
     ) external onlyOwner {
         withdrawalPeriodEndsSeconds = _withdrawalPeriodEndsSeconds;
@@ -194,6 +194,11 @@ contract Stake {
         return balances[_address];
     }
 
+    // Get Stake Time
+    function getStakeTime(address _address) public view returns (uint256) {
+        return stakedTime[_address];
+    }
+
     // Number of stakers
     function getNumStakers() public view returns (uint256) {
         return treasury.stakers();
@@ -253,7 +258,7 @@ contract Stake {
     modifier withinUnstakePeriod() {
         uint256 unstakeTimestampFrom = stakedTime[msg.sender] + minStakeSeconds;
         uint256 unstakeTimestampUntil = stakedTime[msg.sender] +
-            maxStakeSeconds;
+            withdrawalPeriodEndsSeconds;
 
         require(
             block.timestamp >= unstakeTimestampFrom,
@@ -285,6 +290,8 @@ contract Stake {
     {
         // Calculate the maxInterest (unit: gwei)
         uint256 maxInterest = (_amount * interestRate) / 1 gwei;
+
+        _seconds = (maxStakeSeconds < _seconds) ? maxStakeSeconds : _seconds;
 
         // Calculate the fulfilled percent (uint: gwei for precision)
         uint256 fulfilledPercentInGwei = 1 gwei -
